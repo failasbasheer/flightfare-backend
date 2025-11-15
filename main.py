@@ -4,6 +4,7 @@ from pydantic import BaseModel
 import joblib
 import numpy as np
 import datetime
+from typing import List, Dict
 
 # ------------------------------------------------
 # FASTAPI INIT
@@ -48,14 +49,9 @@ TIME_SLOT = {
 DEFAULT_SLOT = (9, 0)
 
 # ------------------------------------------------
-# ROUTE → DURATION MAP (ALL VALID ROUTES FROM DATASET)
-# Realistic durations
+# ROUTE → DURATION MAP (ALL VALID ROUTES)
 # ------------------------------------------------
 ROUTE_DURATION = {
-
-    # ---------------------------
-    # DELHI ROUTES
-    # ---------------------------
     ("Delhi", "Banglore"): (2, 50),
     ("Delhi", "Kolkata"): (2, 15),
     ("Delhi", "Chennai"): (2, 55),
@@ -72,9 +68,6 @@ ROUTE_DURATION = {
     ("Hyderabad", "Delhi"): (2, 0),
     ("New Delhi", "Delhi"): (0, 50),
 
-    # ---------------------------
-    # BANGLORE ROUTES
-    # ---------------------------
     ("Banglore", "Mumbai"): (1, 35),
     ("Banglore", "Kolkata"): (2, 30),
     ("Banglore", "Chennai"): (1, 0),
@@ -82,64 +75,27 @@ ROUTE_DURATION = {
     ("Banglore", "Hyderabad"): (1, 0),
     ("Banglore", "New Delhi"): (2, 55),
 
-    ("Mumbai", "Banglore"): (1, 35),
-    ("Kolkata", "Banglore"): (2, 30),
-    ("Chennai", "Banglore"): (1, 0),
-    ("Cochin", "Banglore"): (1, 10),
-    ("Hyderabad", "Banglore"): (1, 0),
-    ("New Delhi", "Banglore"): (2, 55),
-
-    # ---------------------------
-    # KOLKATA ROUTES
-    # ---------------------------
     ("Kolkata", "Mumbai"): (2, 40),
     ("Kolkata", "Chennai"): (2, 20),
     ("Kolkata", "Cochin"): (3, 0),
     ("Kolkata", "Hyderabad"): (2, 0),
     ("Kolkata", "New Delhi"): (2, 20),
 
-    ("Mumbai", "Kolkata"): (2, 40),
-    ("Chennai", "Kolkata"): (2, 20),
-    ("Cochin", "Kolkata"): (3, 0),
-    ("Hyderabad", "Kolkata"): (2, 0),
-    ("New Delhi", "Kolkata"): (2, 20),
-
-    # ---------------------------
-    # MUMBAI ROUTES
-    # ---------------------------
     ("Mumbai", "Chennai"): (1, 40),
     ("Mumbai", "Cochin"): (1, 40),
     ("Mumbai", "Hyderabad"): (1, 30),
     ("Mumbai", "New Delhi"): (2, 0),
 
-    ("Chennai", "Mumbai"): (1, 40),
-    ("Cochin", "Mumbai"): (1, 40),
-    ("Hyderabad", "Mumbai"): (1, 30),
-    ("New Delhi", "Mumbai"): (2, 0),
-
-    # ---------------------------
-    # CHENNAI ROUTES
-    # ---------------------------
     ("Chennai", "Cochin"): (1, 15),
     ("Chennai", "Hyderabad"): (1, 15),
     ("Chennai", "New Delhi"): (2, 50),
 
-    ("Cochin", "Chennai"): (1, 15),
-    ("Hyderabad", "Chennai"): (1, 15),
-    ("New Delhi", "Chennai"): (2, 50),
-
-    # ---------------------------
-    # HYDERABAD ROUTES
-    # ---------------------------
     ("Hyderabad", "Cochin"): (1, 30),
     ("Hyderabad", "New Delhi"): (2, 0),
-
-    ("Cochin", "Hyderabad"): (1, 30),
-    ("New Delhi", "Hyderabad"): (2, 0),
 }
 
 # ------------------------------------------------
-# LABEL ENCODING (Matches model training EXACTLY)
+# ENCODING MAPS
 # ------------------------------------------------
 airline_map = {
     'Jet Airways': 0,
@@ -182,45 +138,39 @@ stops_map = {
 }
 
 # ------------------------------------------------
-# BUILD MODEL FEATURES (Final 12 fields)
+# BUILD FEATURES
 # ------------------------------------------------
-def build_features(data: UserInput):
-
-    # Parse date
-    d = datetime.datetime.strptime(data.Date_of_Journey, "%Y-%m-%d")
+def build_features(data: UserInput, *, override_date=None, override_airline=None, override_stops=None):
+    # Date
+    date_str = override_date or data.Date_of_Journey
+    d = datetime.datetime.strptime(date_str, "%Y-%m-%d")
     Journey_day = d.day
     Journey_month = d.month
 
-    # Time bucket → departure time
+    # Time slot
     Dep_hour, Dep_min = TIME_SLOT.get(data.Time_Slot, DEFAULT_SLOT)
 
-    # Duration based on exact dataset routes
-    Duration_hour, Duration_min = ROUTE_DURATION.get(
-        (data.Source, data.Destination),
-        (2, 30)  # fallback
-    )
+    # Duration (unchanged)
+    route = (data.Source, data.Destination)
+    Duration_hour, Duration_min = ROUTE_DURATION.get(route, (2, 30))
 
-    # Compute arrival time
-    dep_dt = datetime.datetime(2024, 1, 1, Dep_hour, Dep_min)
-    arr_dt = dep_dt + datetime.timedelta(
-        hours=Duration_hour,
-        minutes=Duration_min
-    )
+    # Arrival
+    dep = datetime.datetime(2024, 1, 1, Dep_hour, Dep_min)
+    arr = dep + datetime.timedelta(hours=Duration_hour, minutes=Duration_min)
+    Arrival_hour = arr.hour
+    Arrival_min = arr.minute
 
-    Arrival_hour = arr_dt.hour
-    Arrival_min = arr_dt.minute
-
-    # Encode categorical features
-    Airline = airline_map[data.Airline]
+    # Encodings
+    Airline = airline_map[override_airline or data.Airline]
     Source = source_map[data.Source]
     Destination = destination_map[data.Destination]
-    Total_Stops = stops_map[data.Total_Stops]
+    Stops = stops_map[override_stops or data.Total_Stops]
 
     return np.array([[
         Airline,
         Source,
         Destination,
-        Total_Stops,
+        Stops,
         Journey_day,
         Journey_month,
         Dep_hour,
@@ -232,10 +182,54 @@ def build_features(data: UserInput):
     ]])
 
 # ------------------------------------------------
-# PREDICT ENDPOINT
+# NEARBY DATES
+# ------------------------------------------------
+def get_nearby_dates(date_str):
+    base = datetime.datetime.strptime(date_str, "%Y-%m-%d")
+    return [(base + datetime.timedelta(days=i)).strftime("%Y-%m-%d") for i in [-2, -1, 0, 1, 2]]
+
+# ------------------------------------------------
+# ALL AIRLINES
+# ------------------------------------------------
+ALL_AIRLINES = list(airline_map.keys())
+
+# ------------------------------------------------
+# PREDICT ENDPOINT (EXTENDED)
 # ------------------------------------------------
 @app.post("/predict")
 def predict(data: UserInput):
-    X = build_features(data)
-    prediction = model.predict(X)[0]
-    return {"predicted_price": float(prediction)}
+
+    # MAIN PREDICTION
+    main_features = build_features(data)
+    main_price = float(model.predict(main_features)[0])
+
+    # NEARBY DAY PRICES
+    nearby = []
+    for d in get_nearby_dates(data.Date_of_Journey):
+        f = build_features(data, override_date=d)
+        price = float(model.predict(f)[0])
+        nearby.append({"date": d, "price": price})
+
+    # MULTI STOP PRICES
+    multi = []
+    for stops in ["non-stop", "1 stop", "2 stops"]:
+        f = build_features(data, override_stops=stops)
+        price = float(model.predict(f)[0])
+        multi.append({"stops": stops, "price": price})
+
+    # AIRLINE COMPARISON
+    airlines = []
+    for airline in ALL_AIRLINES:
+        f = build_features(data, override_airline=airline)
+        price = float(model.predict(f)[0])
+        airlines.append({"airline": airline, "price": price})
+
+    airlines = sorted(airlines, key=lambda x: x["price"])
+
+    # FULL RESPONSE
+    return {
+        "predicted_price": main_price,
+        "nearby_days": nearby,
+        "multi_stop": multi,
+        "airline_comparison": airlines
+    }
