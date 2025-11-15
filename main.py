@@ -8,7 +8,22 @@ app = FastAPI()
 
 model = joblib.load("flight_rf.pkl")
 
-class FlightInput(BaseModel):
+# -----------------------------
+# INPUT SCHEMAS
+# -----------------------------
+
+# What user sends
+class UserInput(BaseModel):
+    Airline: str
+    Source: str
+    Destination: str
+    Total_Stops: str
+    Date_of_Journey: str
+    Time_Slot: str   # NEW FIELD
+
+
+# What model expects (internal only)
+class ModelInput(BaseModel):
     Airline: str
     Source: str
     Destination: str
@@ -18,6 +33,28 @@ class FlightInput(BaseModel):
     Arrival_Time: str
     Duration: str
 
+
+# -----------------------------
+# TIME SLOT MAPPING
+# -----------------------------
+def map_time_slot(slot: str):
+    slot = slot.lower()
+
+    if slot == "early_morning":
+        return ("05:00", "07:30", "2h 30m")
+    elif slot == "morning":
+        return ("09:00", "11:30", "2h 30m")
+    elif slot == "afternoon":
+        return ("14:00", "16:30", "2h 30m")
+    elif slot == "evening":
+        return ("19:00", "21:30", "2h 30m")
+
+    return ("09:00", "11:30", "2h 30m")
+
+
+# -----------------------------
+# ENCODING MAPS
+# -----------------------------
 
 airline_map = {
     'Jet Airways': 0,
@@ -60,7 +97,10 @@ stops_map = {
 }
 
 
-def preprocess(data: FlightInput):
+# -----------------------------
+# PREPROCESS
+# -----------------------------
+def preprocess(data: ModelInput):
     journey_date = datetime.datetime.strptime(data.Date_of_Journey, "%d/%m/%Y")
     Journey_day = journey_date.day
     Journey_month = journey_date.month
@@ -94,8 +134,26 @@ def preprocess(data: FlightInput):
     return features
 
 
+# -----------------------------
+# PREDICT ENDPOINT
+# -----------------------------
 @app.post("/predict")
-def predict(data: FlightInput):
-    X = preprocess(data)
+def predict(data: UserInput):
+
+    dep, arr, dur = map_time_slot(data.Time_Slot)
+
+    # convert to old schema
+    new_data = ModelInput(
+        Airline=data.Airline,
+        Source=data.Source,
+        Destination=data.Destination,
+        Total_Stops=data.Total_Stops,
+        Date_of_Journey=data.Date_of_Journey,
+        Dep_Time=dep,
+        Arrival_Time=arr,
+        Duration=dur
+    )
+
+    X = preprocess(new_data)
     prediction = model.predict(X)[0]
     return {"predicted_price": float(prediction)}
