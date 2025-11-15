@@ -87,14 +87,14 @@ airline_map = {
 source_map = {
     'Delhi': 0,
     'Kolkata': 1,
-    'Banglore': 2,
+    'Bangalore': 2,
     'Mumbai': 3,
     'Chennai': 4
 }
 
 destination_map = {
     'Cochin': 0,
-    'Banglore': 1,
+    'Bangalore': 1,
     'Delhi': 2,
     'New Delhi': 3,
     'Hyderabad': 4,
