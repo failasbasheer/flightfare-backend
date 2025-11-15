@@ -6,7 +6,7 @@ import numpy as np
 import datetime
 
 # ------------------------------------------------
-# FASTAPI APP + CORS
+# FASTAPI INIT
 # ------------------------------------------------
 app = FastAPI()
 
@@ -23,51 +23,123 @@ app.add_middleware(
 # ------------------------------------------------
 model = joblib.load("flight_rf.pkl")
 
-
 # ------------------------------------------------
-# INPUT SCHEMAS
+# USER INPUT (6 FIELDS)
 # ------------------------------------------------
-
 class UserInput(BaseModel):
     Airline: str
     Source: str
     Destination: str
     Total_Stops: str
-    Date_of_Journey: str    # HTML input sends YYYY-MM-DD
     Time_Slot: str
-
-
-class ModelInput(BaseModel):
-    Airline: str
-    Source: str
-    Destination: str
-    Total_Stops: str
-    Date_of_Journey: str
-    Dep_Time: str
-    Arrival_Time: str
-    Duration: str
-
+    Date_of_Journey: str  # YYYY-MM-DD
 
 # ------------------------------------------------
-# TIME SLOT MAPPING
+# TIME SLOT → DEPARTURE TIME
 # ------------------------------------------------
-def map_time_slot(slot: str):
-    slot = slot.lower()
+TIME_SLOT = {
+    "early_morning": (5, 0),
+    "morning": (9, 0),
+    "afternoon": (14, 0),
+    "evening": (19, 0),
+    "night": (23, 0)
+}
 
-    if slot == "early_morning":
-        return ("05:00", "07:30", "2h 30m")
-    elif slot == "morning":
-        return ("09:00", "11:30", "2h 30m")
-    elif slot == "afternoon":
-        return ("14:00", "16:30", "2h 30m")
-    elif slot == "evening":
-        return ("19:00", "21:30", "2h 30m")
-
-    return ("09:00", "11:30", "2h 30m")
-
+DEFAULT_SLOT = (9, 0)
 
 # ------------------------------------------------
-# LABEL ENCODERS
+# ROUTE → DURATION MAP (ALL VALID ROUTES FROM DATASET)
+# Realistic durations
+# ------------------------------------------------
+ROUTE_DURATION = {
+
+    # ---------------------------
+    # DELHI ROUTES
+    # ---------------------------
+    ("Delhi", "Banglore"): (2, 50),
+    ("Delhi", "Kolkata"): (2, 15),
+    ("Delhi", "Chennai"): (2, 55),
+    ("Delhi", "Mumbai"): (2, 5),
+    ("Delhi", "Cochin"): (3, 20),
+    ("Delhi", "Hyderabad"): (2, 0),
+    ("Delhi", "New Delhi"): (0, 50),
+
+    ("Banglore", "Delhi"): (2, 50),
+    ("Kolkata", "Delhi"): (2, 15),
+    ("Chennai", "Delhi"): (2, 55),
+    ("Mumbai", "Delhi"): (2, 5),
+    ("Cochin", "Delhi"): (3, 20),
+    ("Hyderabad", "Delhi"): (2, 0),
+    ("New Delhi", "Delhi"): (0, 50),
+
+    # ---------------------------
+    # BANGLORE ROUTES
+    # ---------------------------
+    ("Banglore", "Mumbai"): (1, 35),
+    ("Banglore", "Kolkata"): (2, 30),
+    ("Banglore", "Chennai"): (1, 0),
+    ("Banglore", "Cochin"): (1, 10),
+    ("Banglore", "Hyderabad"): (1, 0),
+    ("Banglore", "New Delhi"): (2, 55),
+
+    ("Mumbai", "Banglore"): (1, 35),
+    ("Kolkata", "Banglore"): (2, 30),
+    ("Chennai", "Banglore"): (1, 0),
+    ("Cochin", "Banglore"): (1, 10),
+    ("Hyderabad", "Banglore"): (1, 0),
+    ("New Delhi", "Banglore"): (2, 55),
+
+    # ---------------------------
+    # KOLKATA ROUTES
+    # ---------------------------
+    ("Kolkata", "Mumbai"): (2, 40),
+    ("Kolkata", "Chennai"): (2, 20),
+    ("Kolkata", "Cochin"): (3, 0),
+    ("Kolkata", "Hyderabad"): (2, 0),
+    ("Kolkata", "New Delhi"): (2, 20),
+
+    ("Mumbai", "Kolkata"): (2, 40),
+    ("Chennai", "Kolkata"): (2, 20),
+    ("Cochin", "Kolkata"): (3, 0),
+    ("Hyderabad", "Kolkata"): (2, 0),
+    ("New Delhi", "Kolkata"): (2, 20),
+
+    # ---------------------------
+    # MUMBAI ROUTES
+    # ---------------------------
+    ("Mumbai", "Chennai"): (1, 40),
+    ("Mumbai", "Cochin"): (1, 40),
+    ("Mumbai", "Hyderabad"): (1, 30),
+    ("Mumbai", "New Delhi"): (2, 0),
+
+    ("Chennai", "Mumbai"): (1, 40),
+    ("Cochin", "Mumbai"): (1, 40),
+    ("Hyderabad", "Mumbai"): (1, 30),
+    ("New Delhi", "Mumbai"): (2, 0),
+
+    # ---------------------------
+    # CHENNAI ROUTES
+    # ---------------------------
+    ("Chennai", "Cochin"): (1, 15),
+    ("Chennai", "Hyderabad"): (1, 15),
+    ("Chennai", "New Delhi"): (2, 50),
+
+    ("Cochin", "Chennai"): (1, 15),
+    ("Hyderabad", "Chennai"): (1, 15),
+    ("New Delhi", "Chennai"): (2, 50),
+
+    # ---------------------------
+    # HYDERABAD ROUTES
+    # ---------------------------
+    ("Hyderabad", "Cochin"): (1, 30),
+    ("Hyderabad", "New Delhi"): (2, 0),
+
+    ("Cochin", "Hyderabad"): (1, 30),
+    ("New Delhi", "Hyderabad"): (2, 0),
+}
+
+# ------------------------------------------------
+# LABEL ENCODING (Matches model training EXACTLY)
 # ------------------------------------------------
 airline_map = {
     'Jet Airways': 0,
@@ -85,20 +157,20 @@ airline_map = {
 }
 
 source_map = {
-    'Delhi': 0,
+    'Banglore': 2,
     'Kolkata': 1,
-    'Bangalore': 2,
-    'Mumbai': 3,
-    'Chennai': 4
+    'Delhi': 0,
+    'Chennai': 4,
+    'Mumbai': 3
 }
 
 destination_map = {
-    'Cochin': 0,
-    'Bangalore': 1,
-    'Delhi': 2,
     'New Delhi': 3,
-    'Hyderabad': 4,
-    'Kolkata': 5
+    'Banglore': 1,
+    'Cochin': 0,
+    'Kolkata': 5,
+    'Delhi': 2,
+    'Hyderabad': 4
 }
 
 stops_map = {
@@ -109,30 +181,42 @@ stops_map = {
     '4 stops': 4
 }
 
-
 # ------------------------------------------------
-# PREPROCESS — FIXED DATE FORMAT
+# BUILD MODEL FEATURES (Final 12 fields)
 # ------------------------------------------------
-def preprocess(data: ModelInput):
+def build_features(data: UserInput):
 
-    # FIXED: HTML input = YYYY-MM-DD
-    journey_date = datetime.datetime.strptime(data.Date_of_Journey, "%Y-%m-%d")
+    # Parse date
+    d = datetime.datetime.strptime(data.Date_of_Journey, "%Y-%m-%d")
+    Journey_day = d.day
+    Journey_month = d.month
 
-    Journey_day = journey_date.day
-    Journey_month = journey_date.month
+    # Time bucket → departure time
+    Dep_hour, Dep_min = TIME_SLOT.get(data.Time_Slot, DEFAULT_SLOT)
 
-    Dep_hour, Dep_min = map(int, data.Dep_Time.split(":"))
-    Arrival_hour, Arrival_min = map(int, data.Arrival_Time.split(":"))
+    # Duration based on exact dataset routes
+    Duration_hour, Duration_min = ROUTE_DURATION.get(
+        (data.Source, data.Destination),
+        (2, 30)  # fallback
+    )
 
-    Duration_hour = int(data.Duration.split("h")[0])
-    Duration_min = int(data.Duration.split("h")[1].replace("m", ""))
+    # Compute arrival time
+    dep_dt = datetime.datetime(2024, 1, 1, Dep_hour, Dep_min)
+    arr_dt = dep_dt + datetime.timedelta(
+        hours=Duration_hour,
+        minutes=Duration_min
+    )
 
+    Arrival_hour = arr_dt.hour
+    Arrival_min = arr_dt.minute
+
+    # Encode categorical features
     Airline = airline_map[data.Airline]
     Source = source_map[data.Source]
     Destination = destination_map[data.Destination]
     Total_Stops = stops_map[data.Total_Stops]
 
-    features = np.array([[
+    return np.array([[
         Airline,
         Source,
         Destination,
@@ -147,29 +231,11 @@ def preprocess(data: ModelInput):
         Duration_min
     ]])
 
-    return features
-
-
 # ------------------------------------------------
 # PREDICT ENDPOINT
 # ------------------------------------------------
 @app.post("/predict")
 def predict(data: UserInput):
-
-    dep, arr, dur = map_time_slot(data.Time_Slot)
-
-    new_data = ModelInput(
-        Airline=data.Airline,
-        Source=data.Source,
-        Destination=data.Destination,
-        Total_Stops=data.Total_Stops,
-        Date_of_Journey=data.Date_of_Journey,
-        Dep_Time=dep,
-        Arrival_Time=arr,
-        Duration=dur
-    )
-
-    X = preprocess(new_data)
+    X = build_features(data)
     prediction = model.predict(X)[0]
-
     return {"predicted_price": float(prediction)}
