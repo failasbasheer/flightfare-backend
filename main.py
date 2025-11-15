@@ -1,28 +1,45 @@
 from fastapi import FastAPI
+from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 import joblib
 import numpy as np
 import datetime
 
+# ------------------------------------------------
+# FASTAPI APP + CORS (REQUIRED FOR FRONTEND ACCESS)
+# ------------------------------------------------
 app = FastAPI()
 
+# 🔥 CORS FIX - THIS IS WHAT SOLVES YOUR ERROR
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["*"],  # or ["http://localhost:3000"] for stricter use
+    allow_credentials=True,
+    allow_methods=["*"],   # allow POST, GET, OPTIONS
+    allow_headers=["*"],
+)
+
+# ------------------------------------------------
+# LOAD MODEL
+# ------------------------------------------------
 model = joblib.load("flight_rf.pkl")
 
-# -----------------------------
-# INPUT SCHEMAS
-# -----------------------------
 
-# What user sends
+# ------------------------------------------------
+# INPUT SCHEMAS
+# ------------------------------------------------
+
+# What frontend sends
 class UserInput(BaseModel):
     Airline: str
     Source: str
     Destination: str
     Total_Stops: str
     Date_of_Journey: str
-    Time_Slot: str   # NEW FIELD
+    Time_Slot: str   # user selects morning / evening etc.
 
 
-# What model expects (internal only)
+# What model internally needs
 class ModelInput(BaseModel):
     Airline: str
     Source: str
@@ -34,9 +51,9 @@ class ModelInput(BaseModel):
     Duration: str
 
 
-# -----------------------------
+# ------------------------------------------------
 # TIME SLOT MAPPING
-# -----------------------------
+# ------------------------------------------------
 def map_time_slot(slot: str):
     slot = slot.lower()
 
@@ -49,12 +66,13 @@ def map_time_slot(slot: str):
     elif slot == "evening":
         return ("19:00", "21:30", "2h 30m")
 
+    # fallback default
     return ("09:00", "11:30", "2h 30m")
 
 
-# -----------------------------
-# ENCODING MAPS
-# -----------------------------
+# ------------------------------------------------
+# LABEL ENCODERS
+# ------------------------------------------------
 
 airline_map = {
     'Jet Airways': 0,
@@ -97,9 +115,9 @@ stops_map = {
 }
 
 
-# -----------------------------
-# PREPROCESS
-# -----------------------------
+# ------------------------------------------------
+# PREPROCESS FUNCTION
+# ------------------------------------------------
 def preprocess(data: ModelInput):
     journey_date = datetime.datetime.strptime(data.Date_of_Journey, "%d/%m/%Y")
     Journey_day = journey_date.day
@@ -134,15 +152,16 @@ def preprocess(data: ModelInput):
     return features
 
 
-# -----------------------------
+# ------------------------------------------------
 # PREDICT ENDPOINT
-# -----------------------------
+# ------------------------------------------------
 @app.post("/predict")
 def predict(data: UserInput):
 
+    # Map simple time-slot → actual model fields
     dep, arr, dur = map_time_slot(data.Time_Slot)
 
-    # convert to old schema
+    # Convert to the old internal model schema
     new_data = ModelInput(
         Airline=data.Airline,
         Source=data.Source,
@@ -156,4 +175,5 @@ def predict(data: UserInput):
 
     X = preprocess(new_data)
     prediction = model.predict(X)[0]
+
     return {"predicted_price": float(prediction)}
