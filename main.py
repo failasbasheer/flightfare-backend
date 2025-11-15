@@ -6,16 +6,15 @@ import numpy as np
 import datetime
 
 # ------------------------------------------------
-# FASTAPI APP + CORS (REQUIRED FOR FRONTEND ACCESS)
+# FASTAPI APP + CORS
 # ------------------------------------------------
 app = FastAPI()
 
-# 🔥 CORS FIX - THIS IS WHAT SOLVES YOUR ERROR
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],  # or ["http://localhost:3000"] for stricter use
+    allow_origins=["*"],
     allow_credentials=True,
-    allow_methods=["*"],   # allow POST, GET, OPTIONS
+    allow_methods=["*"],
     allow_headers=["*"],
 )
 
@@ -29,17 +28,15 @@ model = joblib.load("flight_rf.pkl")
 # INPUT SCHEMAS
 # ------------------------------------------------
 
-# What frontend sends
 class UserInput(BaseModel):
     Airline: str
     Source: str
     Destination: str
     Total_Stops: str
-    Date_of_Journey: str
-    Time_Slot: str   # user selects morning / evening etc.
+    Date_of_Journey: str    # HTML input sends YYYY-MM-DD
+    Time_Slot: str
 
 
-# What model internally needs
 class ModelInput(BaseModel):
     Airline: str
     Source: str
@@ -66,14 +63,12 @@ def map_time_slot(slot: str):
     elif slot == "evening":
         return ("19:00", "21:30", "2h 30m")
 
-    # fallback default
     return ("09:00", "11:30", "2h 30m")
 
 
 # ------------------------------------------------
 # LABEL ENCODERS
 # ------------------------------------------------
-
 airline_map = {
     'Jet Airways': 0,
     'IndiGo': 1,
@@ -116,10 +111,13 @@ stops_map = {
 
 
 # ------------------------------------------------
-# PREPROCESS FUNCTION
+# PREPROCESS — FIXED DATE FORMAT
 # ------------------------------------------------
 def preprocess(data: ModelInput):
-    journey_date = datetime.datetime.strptime(data.Date_of_Journey, "%d/%m/%Y")
+
+    # FIXED: HTML input = YYYY-MM-DD
+    journey_date = datetime.datetime.strptime(data.Date_of_Journey, "%Y-%m-%d")
+
     Journey_day = journey_date.day
     Journey_month = journey_date.month
 
@@ -158,10 +156,8 @@ def preprocess(data: ModelInput):
 @app.post("/predict")
 def predict(data: UserInput):
 
-    # Map simple time-slot → actual model fields
     dep, arr, dur = map_time_slot(data.Time_Slot)
 
-    # Convert to the old internal model schema
     new_data = ModelInput(
         Airline=data.Airline,
         Source=data.Source,
